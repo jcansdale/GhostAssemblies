@@ -1,2 +1,4 @@
-github jbevain/cecil
+source https://nuget.org/api/v2
+nuget proj2src
 
+github jbevain/cecil
