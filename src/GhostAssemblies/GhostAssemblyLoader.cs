@@ -1,9 +1,10 @@
 ﻿namespace GhostAssemblies
 {
     using System;
-    using System.Collections.Generic;
     using System.IO;
     using System.Reflection;
+    using System.Collections.Generic;
+    using Internal.Mono.Cecil;
 
     public class GhostAssemblyLoader : IDisposable
     {
@@ -127,7 +128,7 @@
             foreach (var assemblyFile in assemblyFiles)
             {
                 var assemblyName = Path.GetFileNameWithoutExtension(assemblyFile);
-                ghostAssemblies[assemblyName] = new GhostAssembly(this, assemblyFile);
+                ghostAssemblies[assemblyName] = new GhostAssembly(this, assemblyName, assemblyFile);
             }
 
             return ghostAssemblies;
@@ -153,40 +154,47 @@
         class GhostAssembly
         {
             GhostAssemblyLoader ghostAssemblyLoader;
-            string assemblyFile;
             System.Reflection.Assembly assembly;
             DateTime lastWriteTime;
 
-            internal GhostAssembly(GhostAssemblyLoader ghostAssemblyLoader, string assemblyFile)
+            internal GhostAssembly(GhostAssemblyLoader ghostAssemblyLoader, string name, string assemblyFile)
             {
                 this.ghostAssemblyLoader = ghostAssemblyLoader;
-                this.assemblyFile = assemblyFile;
+                Name = name;
+                AssemblyFile = assemblyFile;
             }
 
-            public string AssemblyFile => assemblyFile;
+            public string AssemblyFile { get; }
+
+            public string Name { get; }
 
             public System.Reflection.Assembly Assembly => assembly;
 
             public System.Reflection.Assembly GetAssembly()
             {
-                if(!File.Exists(assemblyFile))
+                if(!File.Exists(AssemblyFile))
                 {
-                    var message = GhostAssemblyException.CreateGhostNotFoundMessage(assemblyFile);
+                    var message = GhostAssemblyException.CreateGhostNotFoundMessage(AssemblyFile);
                     throw new GhostAssemblyException(message);
                 }
 
                 if(assembly == null)
                 {
-                    assembly = loadAssemblyFromBytes(assemblyFile);
-                    lastWriteTime = File.GetLastWriteTime(assemblyFile);
+                    assembly = loadAssemblyFromBytes(AssemblyFile);
+                    lastWriteTime = File.GetLastWriteTime(AssemblyFile);
                 }
 
                 if(reloadRequired())
                 {
-                    var newAssembly = loadAssemblyFromBytes(assemblyFile);
-                    assertAssemblyVersionChangeBeforeReload(ghostAssemblyLoader, assembly, newAssembly);
+                    var newAssembly = loadAssemblyFromBytes(AssemblyFile);
+                    var ghostAssemblies = findGhostAssembliesNeedingNewVersion(ghostAssemblyLoader, assembly, newAssembly);
+                    if(ghostAssemblies.Count > 0)
+                    {
+                        newAssembly = loadAssemblyFromBytes(AssemblyFile, ghostAssemblies);
+                    }
+
                     assembly = newAssembly;
-                    lastWriteTime = File.GetLastWriteTime(assemblyFile);
+                    lastWriteTime = File.GetLastWriteTime(AssemblyFile);
                 }
 
                 return assembly;
@@ -199,30 +207,32 @@
                     return false;
                 }
 
-                return lastWriteTime != File.GetLastWriteTime(assemblyFile);
+                return lastWriteTime != File.GetLastWriteTime(AssemblyFile);
             }
 
-            static void assertAssemblyVersionChangeBeforeReload(GhostAssemblyLoader ghostAssemblyLoader,
+            static IList<GhostAssembly> findGhostAssembliesNeedingNewVersion(GhostAssemblyLoader ghostAssemblyLoader,
                 System.Reflection.Assembly oldAssembly, System.Reflection.Assembly newAssembly)
             {
-                foreach(var referencedAssembly in newAssembly.GetReferencedAssemblies())
+                var ghostAssemblyList = new List<GhostAssembly>();
+                foreach (var referencedAssembly in newAssembly.GetReferencedAssemblies())
                 {
                     var ghostAssembly = ghostAssemblyLoader.findGhostAssembly(referencedAssembly.Name);
-                    if(ghostAssembly == null)
+                    if (ghostAssembly == null)
                     {
                         continue;
                     }
 
-                    if(ghostAssembly.reloadRequired())
+                    if (ghostAssembly.reloadRequired())
                     {
                         var oldAssemblyName = findReferencedAssembly(oldAssembly, referencedAssembly.Name);
-                        if(oldAssemblyName != null && oldAssemblyName.Version == referencedAssembly.Version)
+                        if (oldAssemblyName != null && oldAssemblyName.Version == referencedAssembly.Version)
                         {
-                            var message = GhostAssemblyException.CreateChangeAssemblyVersionMessage(referencedAssembly.Name);
-                            throw new GhostAssemblyException(message);
+                            ghostAssemblyList.Add(ghostAssembly);
                         }
                     }
                 }
+
+                return ghostAssemblyList;
             }
 
             static AssemblyName findReferencedAssembly(System.Reflection.Assembly assembly, string name)
@@ -238,9 +248,15 @@
                 return null;
             }
 
-            static System.Reflection.Assembly loadAssemblyFromBytes(string assemblyFile)
+            static System.Reflection.Assembly loadAssemblyFromBytes(string assemblyFile,
+                IEnumerable<GhostAssembly> newVersionAssemblies = null)
             {
                 var asmBytes = File.ReadAllBytes(assemblyFile);
+                if (newVersionAssemblies != null)
+                {
+                    asmBytes = newVersionAssemblyReferences(asmBytes, newVersionAssemblies);
+                }
+
                 var pdbFile = Path.ChangeExtension(assemblyFile, "pdb");
                 if (File.Exists(pdbFile))
                 {
@@ -249,6 +265,40 @@
                 }
 
                 return System.Reflection.Assembly.Load(asmBytes);
+            }
+
+            static byte[] newVersionAssemblyReferences(byte[] assemblyBytes, IEnumerable<GhostAssembly> newVersionGhostAssemblies)
+            {
+                var revision = getNewRevision();
+                var stream = new MemoryStream();
+                stream.Write(assemblyBytes, 0, assemblyBytes.Length);
+                stream.Position = 0;
+
+                using (var module = ModuleDefinition.ReadModule(stream))
+                {
+                    foreach (var assemblyReference in module.AssemblyReferences)
+                    {
+                        foreach (var newVersionGhostAssembly in newVersionGhostAssemblies)
+                        {
+                            if(newVersionGhostAssembly.Name == assemblyReference.Name)
+                            {
+                                var ver = assemblyReference.Version;
+                                assemblyReference.Version = new Version(ver.Major, ver.Minor, ver.Build, revision);
+                            }
+                        }
+                    }
+
+                    module.Write();
+                }
+
+                return stream.ToArray();
+            }
+
+            static int getNewRevision()
+            {
+                // The default revision number is the number of seconds since midnight local time.
+                var now = DateTime.Now;
+                return (now.Hour * 60 + now.Minute) * 60 + now.Second;
             }
         }
 

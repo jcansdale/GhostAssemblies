@@ -44,6 +44,9 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="..\..\paket-files\jbevain\cecil\Mono.Cecil.cs">
+      <Link>Internal\Mono.Cecil.cs</Link>
+    </Compile>
     <Compile Include="GhostAssemblyLoader.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>
