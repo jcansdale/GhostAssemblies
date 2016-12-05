@@ -114,10 +114,14 @@
             }
         }
 
-        [TestCase(typeof(GhostAssemblyLoaderTests), typeof(GhostAssemblyLoader), Description = "Weak-Named Ghost")]
-        [TestCase(typeof(GhostAssemblyLoader), typeof(object), Description = "Strong-Named Ghost")]
-        public void ResolveAssembly_ReferencedAssemblyChanged_ChangeReferencedAssemblyVersion(
-            Type ghostAssemblyType, Type referencedAssemblyType)
+        [TestCase(typeof(GhostAssemblyLoaderTests), typeof(GhostAssemblyLoader), true, false, false, Description = "Ghost & Referenced changes")]
+        [TestCase(typeof(GhostAssemblyLoaderTests), typeof(GhostAssemblyLoader), true, false, false, Description = "Ghost changes")]
+        [TestCase(typeof(GhostAssemblyLoaderTests), typeof(GhostAssemblyLoader), false, true, true, Description = "Referenced changes")]
+        [TestCase(typeof(GhostAssemblyLoaderTests), typeof(GhostAssemblyLoader), false, false, false, Description = "No changes")]
+        [TestCase(typeof(GhostAssemblyLoader), typeof(object), true, true, true, Description = "Strong-Named Ghost")]
+        public void ResolveAssembly_GhostOrReferencedGhostChanges_ExpectVersionChange(
+            Type ghostAssemblyType, Type referencedAssemblyType, bool updateGhost, bool updateReferenced,
+            bool expectVersionChange)
         {
             var ghostAssembly = ghostAssemblyType.Assembly;
             var assemblyName = ghostAssembly.GetName().Name;
@@ -134,39 +138,20 @@
                 var asm1 = ghostAssemblyLoader.ResolveAssembly();
                 var ref1 = findReferencedAssembly(asm1, referencedAssemblyName);
                 ghostAssemblyLoader.ResolveAssembly(referencedAssemblyName);
-                staticMock.For(() => File.GetLastWriteTime(assemblyFile)).Returns(DateTime.Now);
-                staticMock.For(() => File.GetLastWriteTime(referencedAssemblyFile)).Returns(DateTime.Now);
+                if(updateGhost) staticMock.For(() => File.GetLastWriteTime(assemblyFile)).Returns(DateTime.Now);
+                if(updateReferenced) staticMock.For(() => File.GetLastWriteTime(referencedAssemblyFile)).Returns(DateTime.Now);
 
                 var asm2 = ghostAssemblyLoader.ResolveAssembly();
 
                 var ref2 = findReferencedAssembly(asm2, referencedAssemblyName);
-                Assert.That(ref2.Version, Is.Not.EqualTo(ref1.Version));
-            }
-        }
-
-        [Test]
-        public void ResolveAssembly_ReferencedAssemblyNotChanged_DontChangeReferencedAssemblyVersion()
-        {
-            var testAssembly = GetType().Assembly;
-            var assemblyName = testAssembly.GetName().Name;
-            var assemblyFile = getFile(testAssembly);
-            var referencedAssembly = typeof(GhostAssemblyLoader).Assembly;
-            var referencedAssemblyName = referencedAssembly.GetName().Name;
-            var referencedAssemblyFile = getFile(referencedAssembly);
-            var ghostAssemblyPaths = assemblyFile + ";" + referencedAssemblyFile;
-            using (var ghostAssemblyLoader = new GhostAssemblyLoader(ghostAssemblyPaths, assemblyName))
-            {
-                staticMock.For(() => File.GetLastWriteTime(assemblyFile)).Returns(File.GetLastWriteTime(assemblyFile));
-                staticMock.For(() => File.GetLastWriteTime(referencedAssemblyFile)).Returns(File.GetLastWriteTime(referencedAssemblyFile));
-                var asm1 = ghostAssemblyLoader.ResolveAssembly();
-                var ref1 = findReferencedAssembly(asm1, referencedAssemblyName);
-                ghostAssemblyLoader.ResolveAssembly(referencedAssemblyName);
-                staticMock.For(() => File.GetLastWriteTime(assemblyFile)).Returns(DateTime.Now);
-
-                var asm2 = ghostAssemblyLoader.ResolveAssembly();
-
-                var ref2 = findReferencedAssembly(asm2, referencedAssemblyName);
-                Assert.That(ref2.Version, Is.EqualTo(ref1.Version));
+                if(expectVersionChange)
+                {
+                    Assert.That(ref2.Version, Is.Not.EqualTo(ref1.Version));
+                }
+                else
+                {
+                    Assert.That(ref2.Version, Is.EqualTo(ref1.Version));
+                }
             }
         }
 

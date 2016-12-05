@@ -154,7 +154,6 @@
         class GhostAssembly
         {
             GhostAssemblyLoader ghostAssemblyLoader;
-            System.Reflection.Assembly assembly;
             DateTime lastWriteTime;
 
             internal GhostAssembly(GhostAssemblyLoader ghostAssemblyLoader, string name, string assemblyFile)
@@ -164,11 +163,11 @@
                 AssemblyFile = assemblyFile;
             }
 
-            public string AssemblyFile { get; }
-
             public string Name { get; }
 
-            public System.Reflection.Assembly Assembly => assembly;
+            public string AssemblyFile { get; }
+
+            public System.Reflection.Assembly Assembly { get; private set; }
 
             public System.Reflection.Assembly GetAssembly()
             {
@@ -178,36 +177,66 @@
                     throw new GhostAssemblyException(message);
                 }
 
-                if(assembly == null)
+                if(Assembly == null)
                 {
-                    assembly = loadAssemblyFromBytes(AssemblyFile);
+                    Assembly = loadAssemblyFromBytes(AssemblyFile);
                     lastWriteTime = File.GetLastWriteTime(AssemblyFile);
                 }
 
                 if(reloadRequired())
                 {
                     var newAssembly = loadAssemblyFromBytes(AssemblyFile);
-                    var ghostAssemblies = findGhostAssembliesNeedingNewVersion(ghostAssemblyLoader, assembly, newAssembly);
+                    var ghostAssemblies = findGhostAssembliesNeedingNewVersion(ghostAssemblyLoader, Assembly, newAssembly);
                     if(ghostAssemblies.Count > 0)
                     {
                         newAssembly = loadAssemblyFromBytes(AssemblyFile, ghostAssemblies);
                     }
 
-                    assembly = newAssembly;
+                    Assembly = newAssembly;
                     lastWriteTime = File.GetLastWriteTime(AssemblyFile);
                 }
 
-                return assembly;
+                return Assembly;
             }
 
-            bool reloadRequired()
+            bool reloadRequired(IDictionary<GhostAssembly, bool> cache = null)
             {
-                if(assembly == null)
+                cache = cache ?? new Dictionary<GhostAssembly, bool>();
+
+                if(Assembly == null)
                 {
                     return false;
                 }
 
-                return lastWriteTime != File.GetLastWriteTime(AssemblyFile);
+                foreach (var referencedAssembly in Assembly.GetReferencedAssemblies())
+                {
+                    var ghostAssembly = ghostAssemblyLoader.findGhostAssembly(referencedAssembly.Name);
+                    if (ghostAssembly == null)
+                    {
+                        continue;
+                    }
+
+                    bool reload;
+                    if(cache.TryGetValue(ghostAssembly, out reload))
+                    {
+                        return reload;
+                    }
+
+                    reload = ghostAssembly.reloadRequired(cache);
+                    cache[ghostAssembly] = reload;
+
+                    if(reload)
+                    {
+                        return true;
+                    }
+                }
+
+                if (lastWriteTime != File.GetLastWriteTime(AssemblyFile))
+                {
+                    return true;
+                }
+
+                return false;
             }
 
             static IList<GhostAssembly> findGhostAssembliesNeedingNewVersion(GhostAssemblyLoader ghostAssemblyLoader,
