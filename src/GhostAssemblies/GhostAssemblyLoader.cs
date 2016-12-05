@@ -121,13 +121,13 @@
             return ghostAssembly?.AssemblyFile;
         }
 
-        static IDictionary<string, GhostAssembly> createGhostAssemblies(string[] assemblyFiles)
+        IDictionary<string, GhostAssembly> createGhostAssemblies(string[] assemblyFiles)
         {
             var ghostAssemblies = new Dictionary<string, GhostAssembly>();
             foreach (var assemblyFile in assemblyFiles)
             {
                 var assemblyName = Path.GetFileNameWithoutExtension(assemblyFile);
-                ghostAssemblies[assemblyName] = new GhostAssembly(assemblyFile);
+                ghostAssemblies[assemblyName] = new GhostAssembly(this, assemblyFile);
             }
 
             return ghostAssemblies;
@@ -152,12 +152,14 @@
 
         class GhostAssembly
         {
+            GhostAssemblyLoader ghostAssemblyLoader;
             string assemblyFile;
             System.Reflection.Assembly assembly;
             DateTime lastWriteTime;
 
-            internal GhostAssembly(string assemblyFile)
+            internal GhostAssembly(GhostAssemblyLoader ghostAssemblyLoader, string assemblyFile)
             {
+                this.ghostAssemblyLoader = ghostAssemblyLoader;
                 this.assemblyFile = assemblyFile;
             }
 
@@ -173,14 +175,67 @@
                     throw new GhostAssemblyException(message);
                 }
 
-                var lastWriteTime = File.GetLastWriteTime(assemblyFile);
-                if (lastWriteTime != this.lastWriteTime)
+                if(assembly == null)
                 {
                     assembly = loadAssemblyFromBytes(assemblyFile);
-                    this.lastWriteTime = lastWriteTime;
+                    lastWriteTime = File.GetLastWriteTime(assemblyFile);
+                }
+
+                if(reloadRequired())
+                {
+                    var newAssembly = loadAssemblyFromBytes(assemblyFile);
+                    assertAssemblyVersionChangeBeforeReload(ghostAssemblyLoader, assembly, newAssembly);
+                    assembly = newAssembly;
+                    lastWriteTime = File.GetLastWriteTime(assemblyFile);
                 }
 
                 return assembly;
+            }
+
+            bool reloadRequired()
+            {
+                if(assembly == null)
+                {
+                    return false;
+                }
+
+                return lastWriteTime != File.GetLastWriteTime(assemblyFile);
+            }
+
+            static void assertAssemblyVersionChangeBeforeReload(GhostAssemblyLoader ghostAssemblyLoader,
+                System.Reflection.Assembly oldAssembly, System.Reflection.Assembly newAssembly)
+            {
+                foreach(var referencedAssembly in newAssembly.GetReferencedAssemblies())
+                {
+                    var ghostAssembly = ghostAssemblyLoader.findGhostAssembly(referencedAssembly.Name);
+                    if(ghostAssembly == null)
+                    {
+                        continue;
+                    }
+
+                    if(ghostAssembly.reloadRequired())
+                    {
+                        var oldAssemblyName = findReferencedAssembly(oldAssembly, referencedAssembly.Name);
+                        if(oldAssemblyName != null && oldAssemblyName.Version == referencedAssembly.Version)
+                        {
+                            var message = GhostAssemblyException.CreateChangeAssemblyVersionMessage(referencedAssembly.Name);
+                            throw new GhostAssemblyException(message);
+                        }
+                    }
+                }
+            }
+
+            static AssemblyName findReferencedAssembly(System.Reflection.Assembly assembly, string name)
+            {
+                foreach (var referencedAssembly in assembly.GetReferencedAssemblies())
+                {
+                    if(referencedAssembly.Name == name)
+                    {
+                        return referencedAssembly;
+                    }
+                }
+
+                return null;
             }
 
             static System.Reflection.Assembly loadAssemblyFromBytes(string assemblyFile)
@@ -220,6 +275,13 @@
 
         public static string CreateGhostNotFoundMessage(string assemblyFile) =>
             string.Format("Couldn't find ghost assembly at '{0}'.", assemblyFile);
+
+        public static string CreateChangeAssemblyVersionMessage(string assemblyName)
+        {
+            return string.Format(@"The assembly version of '{0}' must change before it can be reloaded.
+This can be done automatically by adding a '*' to the '{0}' project's assembly version:
+[assembly: AssemblyVersion(""1.0.0.*"")]", assemblyName);
+        }
 
         public const string NoDefaultGhostMessage = "No default ghost assembly name name was specified.";
     }

@@ -114,6 +114,56 @@
             }
         }
 
+        [Test]
+        public void ResolveAssembly_ReferencedAssemblyChanged_ThrowsGhostAssemblyException()
+        {
+            var testAssembly = GetType().Assembly;
+            var assemblyName = testAssembly.GetName().Name;
+            var assemblyFile = getFile(testAssembly);
+            var referencedAssembly = typeof(GhostAssemblyLoader).Assembly;
+            var referencedAssemblyName = referencedAssembly.GetName().Name;
+            var referencedAssemblyFile = getFile(referencedAssembly);
+            var expectMessage = GhostAssemblyException.CreateChangeAssemblyVersionMessage(referencedAssemblyName);
+            var ghostAssemblyPaths = assemblyFile + ";" + referencedAssemblyFile;
+            using (var ghostAssemblyLoader = new GhostAssemblyLoader(ghostAssemblyPaths, assemblyName))
+            {
+                staticMock.For(() => File.GetLastWriteTime(assemblyFile)).Returns(File.GetLastWriteTime(assemblyFile));
+                staticMock.For(() => File.GetLastWriteTime(referencedAssemblyFile)).Returns(File.GetLastWriteTime(referencedAssemblyFile));
+                var asm1 = ghostAssemblyLoader.ResolveAssembly();
+                ghostAssemblyLoader.ResolveAssembly(referencedAssemblyName);
+                staticMock.For(() => File.GetLastWriteTime(assemblyFile)).Returns(DateTime.Now);
+                staticMock.For(() => File.GetLastWriteTime(referencedAssemblyFile)).Returns(DateTime.Now);
+
+                var exception = Assert.Throws<GhostAssemblyException>(() => ghostAssemblyLoader.ResolveAssembly());
+
+                Assert.That(exception.Message, Is.EqualTo(expectMessage));
+            }
+        }
+
+        [Test]
+        public void ResolveAssembly_ReferencedAssemblyNotChanged_DoesntThrow()
+        {
+            var testAssembly = GetType().Assembly;
+            var assemblyName = testAssembly.GetName().Name;
+            var assemblyFile = getFile(testAssembly);
+            var referencedAssembly = typeof(GhostAssemblyLoader).Assembly;
+            var referencedAssemblyName = referencedAssembly.GetName().Name;
+            var referencedAssemblyFile = getFile(referencedAssembly);
+            var ghostAssemblyPaths = assemblyFile + ";" + referencedAssemblyFile;
+            using (var ghostAssemblyLoader = new GhostAssemblyLoader(ghostAssemblyPaths, assemblyName))
+            {
+                staticMock.For(() => File.GetLastWriteTime(assemblyFile)).Returns(File.GetLastWriteTime(assemblyFile));
+                staticMock.For(() => File.GetLastWriteTime(referencedAssemblyFile)).Returns(File.GetLastWriteTime(referencedAssemblyFile));
+                var asm1 = ghostAssemblyLoader.ResolveAssembly();
+                ghostAssemblyLoader.ResolveAssembly(referencedAssemblyName);
+                staticMock.For(() => File.GetLastWriteTime(assemblyFile)).Returns(DateTime.Now);
+
+                var asm2 = ghostAssemblyLoader.ResolveAssembly();
+
+                Assert.That(asm2, Is.Not.EqualTo(asm1));
+            }
+        }
+
         [TestCase(@"\MockGhost.dll", "MockGhost", true, Description = "Load into 'Ghost' context")]
         [TestCase(null, "MockLoadFrom", false, Description = "Load into 'LoadFrom' context")]
         public void ResolveAssembly(string ghostAssemblyFile, string assemblyName, bool isGhost)
