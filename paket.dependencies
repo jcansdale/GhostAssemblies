@@ -1,4 +1,5 @@
 source https://nuget.org/api/v2
 nuget proj2src
+nuget NuGet.CommandLine
 
 github jbevain/cecil

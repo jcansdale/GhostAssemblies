@@ -1,6 +1,7 @@
 NUGET
   remote: https://www.nuget.org/api/v2
+    NuGet.CommandLine (3.4.3)
     proj2src (0.1)
 GITHUB
   remote: jbevain/cecil
-    FULLPROJECT (42db79cc16f1cbe8dbab558904e188352dba2b41)
+    FULLPROJECT (c0181b8b3c091efd6bc5f4d2e5888d0f35b4fef7)
