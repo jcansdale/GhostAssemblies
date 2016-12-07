@@ -17,13 +17,13 @@
             this.defaultAssemblyName = defaultAssemblyName;
             this.installDir = installDir ?? getDirectory(System.Reflection.Assembly.GetCallingAssembly());
 
-            var ghostAssemblyFiles = getAssemblyFiles(ghostAssemblyPaths);
-            ghostAssemblies = createGhostAssemblies(ghostAssemblyFiles);
+            var ghostAssemblyLocations = getAssemblyLocations(ghostAssemblyPaths);
+            ghostAssemblies = createGhostAssemblies(ghostAssemblyLocations);
 
             AppDomain.CurrentDomain.AssemblyResolve += CurrentDomain_AssemblyResolve;
         }
 
-        static string[] getAssemblyFiles(string paths)
+        static string[] getAssemblyLocations(string paths)
         {
             if(paths == null)
             {
@@ -36,6 +36,10 @@
         public void Dispose()
         {
             AppDomain.CurrentDomain.AssemblyResolve -= CurrentDomain_AssemblyResolve;
+            foreach(var ghostAssembly in ghostAssemblies.Values)
+            {
+                ghostAssembly.Dispose();
+            }
         }
 
         System.Reflection.Assembly CurrentDomain_AssemblyResolve(object sender, ResolveEventArgs args)
@@ -72,10 +76,10 @@
             }
 
             // Resolve unknown assembly.
-            var assemblyFile = findAssemblyFile(installDir, assemblyName.Name);
-            if (assemblyFile != null)
+            var location = findAssemblyLocation(installDir, assemblyName.Name);
+            if (location != null)
             {
-                return Assembly.LoadFrom(assemblyFile);
+                return Assembly.LoadFrom(location);
             }
 
             return null;
@@ -116,84 +120,121 @@
             return false;
         }
 
-        public string FindGhostAssemblyFile(string assemblyName)
+        public string FindGhostAssemblyLocation(string assemblyName)
         {
             var ghostAssembly = findGhostAssembly(assemblyName);
-            return ghostAssembly?.AssemblyFile;
+            return ghostAssembly?.Location;
         }
 
-        IDictionary<string, GhostAssembly> createGhostAssemblies(string[] assemblyFiles)
+        IDictionary<string, GhostAssembly> createGhostAssemblies(string[] assemblyLocations)
         {
             var ghostAssemblies = new Dictionary<string, GhostAssembly>();
-            foreach (var assemblyFile in assemblyFiles)
+            foreach (var assemblyLocation in assemblyLocations)
             {
-                var assemblyName = Path.GetFileNameWithoutExtension(assemblyFile);
-                ghostAssemblies[assemblyName] = new GhostAssembly(this, assemblyName, assemblyFile);
+                var assemblyName = Path.GetFileNameWithoutExtension(assemblyLocation);
+                ghostAssemblies[assemblyName] = new GhostAssembly(this, assemblyName, assemblyLocation);
             }
 
             return ghostAssemblies;
         }
 
-        static string findAssemblyFile(string dir, string name)
+        static string findAssemblyLocation(string dir, string name)
         {
-            var assemblyFile = Path.Combine(dir, name + ".dll");
-            if(File.Exists(assemblyFile))
+            var assemblyLocation = Path.Combine(dir, name + ".dll");
+            if(File.Exists(assemblyLocation))
             {
-                return assemblyFile;
+                return assemblyLocation;
             }
 
-            assemblyFile = Path.ChangeExtension(assemblyFile, "exe");
-            if (File.Exists(assemblyFile))
+            assemblyLocation = Path.ChangeExtension(assemblyLocation, "exe");
+            if (File.Exists(assemblyLocation))
             {
-                return assemblyFile;
+                return assemblyLocation;
             }
 
             return null;
         }
 
-        class GhostAssembly
+        class GhostAssembly : IDisposable
         {
             GhostAssemblyLoader ghostAssemblyLoader;
             DateTime lastWriteTime;
+            System.Reflection.Assembly assembly;
+            AssemblyInfo assemblyInfo;
 
-            internal GhostAssembly(GhostAssemblyLoader ghostAssemblyLoader, string name, string assemblyFile)
+            internal GhostAssembly(GhostAssemblyLoader ghostAssemblyLoader, string name, string location)
             {
                 this.ghostAssemblyLoader = ghostAssemblyLoader;
                 Name = name;
-                AssemblyFile = assemblyFile;
+                Location = location;
+            }
+
+            public void Dispose()
+            {
+                assemblyInfo?.Dispose();
+                assemblyInfo = null;
             }
 
             public string Name { get; }
 
-            public string AssemblyFile { get; }
+            public string Location { get; }
 
-            public System.Reflection.Assembly Assembly { get; private set; }
+            public System.Reflection.Assembly Assembly
+            {
+                get { return assembly; }
+
+                private set
+                {
+                    assembly = value;
+                    assemblyInfo?.Dispose();
+                    assemblyInfo = new AssemblyInfo(assembly.FullName, Location);
+                }
+            }
+
+            class AssemblyInfo : System.Reflection.Assembly, IDisposable
+            {
+                internal AssemblyInfo(string fullName, string location)
+                {
+                    FullName = fullName;
+                    Location = location;
+                    AppDomain.CurrentDomain.SetData(FullName, this);
+                }
+
+                public void Dispose()
+                {
+                    AppDomain.CurrentDomain.SetData(FullName, null);
+                }
+
+                public override string FullName { get; }
+
+                public override string Location { get; }
+            }
 
             public System.Reflection.Assembly GetAssembly()
             {
-                if(!File.Exists(AssemblyFile))
+                if(!File.Exists(Location))
                 {
-                    var message = GhostAssemblyException.CreateGhostNotFoundMessage(AssemblyFile);
+                    var message = GhostAssemblyException.CreateGhostNotFoundMessage(Location);
                     throw new GhostAssemblyException(message);
                 }
 
                 if(Assembly == null)
                 {
-                    Assembly = loadAssemblyFromBytes(AssemblyFile);
-                    lastWriteTime = File.GetLastWriteTime(AssemblyFile);
+                    Assembly = loadAssemblyFromBytes(Location);
+                    lastWriteTime = File.GetLastWriteTime(Location);
                 }
 
                 if(reloadRequired())
                 {
-                    var newAssembly = loadAssemblyFromBytes(AssemblyFile);
+                    var newAssembly = loadAssemblyFromBytes(Location);
                     var ghostAssemblies = findGhostAssembliesNeedingNewVersion(ghostAssemblyLoader, Assembly, newAssembly);
                     if(ghostAssemblies.Count > 0)
                     {
-                        newAssembly = loadAssemblyFromBytes(AssemblyFile, ghostAssemblies);
+                        newAssembly = loadAssemblyFromBytes(Location, ghostAssemblies);
                     }
 
                     Assembly = newAssembly;
-                    lastWriteTime = File.GetLastWriteTime(AssemblyFile);
+                    lastWriteTime = File.GetLastWriteTime(Location);
                 }
 
                 return Assembly;
@@ -231,7 +272,7 @@
                     }
                 }
 
-                if (lastWriteTime != File.GetLastWriteTime(AssemblyFile))
+                if (lastWriteTime != File.GetLastWriteTime(Location))
                 {
                     return true;
                 }
@@ -277,16 +318,16 @@
                 return null;
             }
 
-            static System.Reflection.Assembly loadAssemblyFromBytes(string assemblyFile,
+            static System.Reflection.Assembly loadAssemblyFromBytes(string location,
                 IEnumerable<GhostAssembly> newVersionAssemblies = null)
             {
-                var asmBytes = File.ReadAllBytes(assemblyFile);
+                var asmBytes = File.ReadAllBytes(location);
                 if (newVersionAssemblies != null)
                 {
                     asmBytes = newVersionAssemblyReferences(asmBytes, newVersionAssemblies);
                 }
 
-                var pdbFile = Path.ChangeExtension(assemblyFile, "pdb");
+                var pdbFile = Path.ChangeExtension(location, "pdb");
                 if (File.Exists(pdbFile))
                 {
                     var pdbBytes = File.ReadAllBytes(pdbFile);

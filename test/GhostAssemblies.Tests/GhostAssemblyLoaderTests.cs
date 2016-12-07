@@ -24,6 +24,57 @@
         }
 
         [Test]
+        public void ResolveAssembly_Location_IsEmptyString()
+        {
+            var testAssembly = GetType().Assembly;
+            var testName = testAssembly.GetName().Name;
+            var ghostAssemblyPaths = testAssembly.Location;
+            using (var ghostAssemblyLoader = new GhostAssemblyLoader(ghostAssemblyPaths))
+            {
+                var expectLocation = testAssembly.Location;
+
+                var ghostAssembly = ghostAssemblyLoader.ResolveAssembly(testName);
+
+                Assert.That(ghostAssembly.Location, Is.EqualTo(string.Empty));
+            }
+        }
+
+        [Test]
+        public void ResolveAssembly_AppDomainGetData_AssemblyWithLocation()
+        {
+            var testAssembly = GetType().Assembly;
+            var testName = testAssembly.GetName().Name;
+            var ghostAssemblyPaths = testAssembly.Location;
+            using (var ghostAssemblyLoader = new GhostAssemblyLoader(ghostAssemblyPaths))
+            {
+                var expectLocation = testAssembly.Location;
+
+                var ghostAssembly = ghostAssemblyLoader.ResolveAssembly(testName);
+
+                var asm = (Assembly)AppDomain.CurrentDomain.GetData(ghostAssembly.FullName);
+                Assert.That(asm, Is.Not.Null);
+                Assert.That(asm.Location, Is.EqualTo(expectLocation));
+            }
+        }
+
+        [Test]
+        public void Dispose_AppDomainGetData_IsNull()
+        {
+            var testAssembly = GetType().Assembly;
+            var testName = testAssembly.GetName().Name;
+            var ghostAssemblyPaths = testAssembly.Location;
+            using (var ghostAssemblyLoader = new GhostAssemblyLoader(ghostAssemblyPaths))
+            {
+                var expectLocation = testAssembly.Location;
+
+                ghostAssemblyLoader.ResolveAssembly(testName);
+            }
+
+            var asm = (Assembly)AppDomain.CurrentDomain.GetData(testAssembly.FullName);
+            Assert.That(asm, Is.Null);
+        }
+
+        [Test]
         public void ResolveAssembly_NoDefaultGhostAssemblyName_ThrowsException()
         {
             using (var ghostAssemblyLoader = new GhostAssemblyLoader(null))
@@ -41,7 +92,7 @@
         {
             var testAssembly = GetType().Assembly;
             var defaultName = testAssembly.GetName().Name;
-            var ghostAssemblyPaths = getFile(testAssembly);
+            var ghostAssemblyPaths = testAssembly.Location;
             using (var ghostAssemblyLoader = new GhostAssemblyLoader(ghostAssemblyPaths, defaultName))
             {
                 var expectAssembly = ghostAssemblyLoader.ResolveAssembly(defaultName);
@@ -58,7 +109,7 @@
             var unknownName = "UnknownAssemblyName";
             var testAssembly = GetType().Assembly;
             var defaultName = testAssembly.GetName().Name;
-            var ghostAssemblyPaths = getFile(testAssembly);
+            var ghostAssemblyPaths = testAssembly.Location;
             using (var ghostAssemblyLoader = new GhostAssemblyLoader(ghostAssemblyPaths, defaultName))
             {
                 var unknownAssembly = ghostAssemblyLoader.ResolveAssembly(unknownName);
@@ -87,7 +138,7 @@
         {
             var testAssembly = GetType().Assembly;
             var defaultName = testAssembly.GetName().Name;
-            var ghostAssemblyPaths = getFile(testAssembly);
+            var ghostAssemblyPaths = testAssembly.Location;
             using (var ghostAssemblyLoader = new GhostAssemblyLoader(ghostAssemblyPaths, defaultName))
             {
                 var asm1 = ghostAssemblyLoader.ResolveAssembly();
@@ -102,7 +153,7 @@
         {
             var testAssembly = GetType().Assembly;
             var assemblyName = testAssembly.GetName().Name;
-            var assemblyFile = getFile(testAssembly);
+            var assemblyFile = testAssembly.Location;
             using (var ghostAssemblyLoader = new GhostAssemblyLoader(assemblyFile, assemblyName))
             {
                 staticMock.For(() => File.GetLastWriteTime(assemblyFile)).Returns(File.GetLastWriteTime(assemblyFile));
@@ -125,21 +176,21 @@
         {
             var ghostAssembly = ghostAssemblyType.Assembly;
             var assemblyName = ghostAssembly.GetName().Name;
-            var assemblyFile = getFile(ghostAssembly);
+            var assemblyFile = ghostAssembly.Location;
             var referencedAssembly = referencedAssemblyType.Assembly;
             var referencedAssemblyName = referencedAssembly.GetName().Name;
-            var referencedAssemblyFile = getFile(referencedAssembly);
+            var referencedLocation = referencedAssembly.Location;
             var expectMessage = GhostAssemblyException.CreateChangeAssemblyVersionMessage(referencedAssemblyName);
-            var ghostAssemblyPaths = assemblyFile + ";" + referencedAssemblyFile;
+            var ghostAssemblyPaths = assemblyFile + ";" + referencedLocation;
             using (var ghostAssemblyLoader = new GhostAssemblyLoader(ghostAssemblyPaths, assemblyName))
             {
                 staticMock.For(() => File.GetLastWriteTime(assemblyFile)).Returns(File.GetLastWriteTime(assemblyFile));
-                staticMock.For(() => File.GetLastWriteTime(referencedAssemblyFile)).Returns(File.GetLastWriteTime(referencedAssemblyFile));
+                staticMock.For(() => File.GetLastWriteTime(referencedLocation)).Returns(File.GetLastWriteTime(referencedLocation));
                 var asm1 = ghostAssemblyLoader.ResolveAssembly();
                 var ref1 = findReferencedAssembly(asm1, referencedAssemblyName);
                 ghostAssemblyLoader.ResolveAssembly(referencedAssemblyName);
                 if(updateGhost) staticMock.For(() => File.GetLastWriteTime(assemblyFile)).Returns(DateTime.Now);
-                if(updateReferenced) staticMock.For(() => File.GetLastWriteTime(referencedAssemblyFile)).Returns(DateTime.Now);
+                if(updateReferenced) staticMock.For(() => File.GetLastWriteTime(referencedLocation)).Returns(DateTime.Now);
 
                 var asm2 = ghostAssemblyLoader.ResolveAssembly();
 
@@ -170,12 +221,12 @@
 
         [TestCase(@"\MockGhost.dll", "MockGhost", true, Description = "Load into 'Ghost' context")]
         [TestCase(null, "MockLoadFrom", false, Description = "Load into 'LoadFrom' context")]
-        public void ResolveAssembly(string ghostAssemblyFile, string assemblyName, bool isGhost)
+        public void ResolveAssembly(string ghostAssemblyLocation, string assemblyName, bool isGhost)
         {
             var ghostAssembly = typeof(Uri).Assembly;
             var ghostAssemblyBytes = File.ReadAllBytes(ghostAssembly.Location);
-            staticMock.For(() => File.Exists(ghostAssemblyFile)).Returns(true);
-            staticMock.For(() => File.ReadAllBytes(ghostAssemblyFile)).Returns(ghostAssemblyBytes);
+            staticMock.For(() => File.Exists(ghostAssemblyLocation)).Returns(true);
+            staticMock.For(() => File.ReadAllBytes(ghostAssemblyLocation)).Returns(ghostAssemblyBytes);
 
             var loadFromAssembly = typeof(object).Assembly;
             var appPath = getDirectory(Assembly.GetExecutingAssembly());
@@ -184,7 +235,7 @@
             staticMock.For(() => Assembly.LoadFrom(appMockPath)).Returns(loadFromAssembly);
 
             var expectAssembly = isGhost ? ghostAssembly : loadFromAssembly;
-            using (var ghostAssemblyLoader = new GhostAssemblyLoader(ghostAssemblyFile))
+            using (var ghostAssemblyLoader = new GhostAssemblyLoader(ghostAssemblyLocation))
             {
                 var resolvedAssembly = ghostAssemblyLoader.ResolveAssembly(assemblyName);
 
@@ -217,7 +268,7 @@
         {
             var execAsm = Assembly.GetExecutingAssembly();
             var execAsmName = execAsm.GetName().Name;
-            var execAsmLocation = getFile(execAsm);
+            var execAsmLocation = execAsm.Location;
             var execAssemblyBytes = File.ReadAllBytes(execAsmLocation);
             staticMock.For(() => File.Exists(execAsmLocation)).Returns(true);
             staticMock.For(() => File.ReadAllBytes(execAsmLocation)).Returns(execAssemblyBytes);
@@ -241,7 +292,7 @@
         [TestCase("Test", @"\BasePath\Test.exe", @"\BasePath\Test.exe", @"\BasePath\Test.exe")]
         [TestCase("Test", null, @"$(AppPath)\Test.exe", null)]
         [TestCase("Test", @"\First\Test.exe", @"\First\Test.exe;Second\Test.exe", @"\First\Test.exe")]
-        public void FindGhostAssemblyFile(string assemblyName, string ghostAssemblyPaths, string filesExist, string expect)
+        public void FindGhostAssemblyLocation(string assemblyName, string ghostAssemblyPaths, string filesExist, string expect)
         {
             var appPath = getDirectory(typeof(GhostAssemblyLoader).Assembly);
             ghostAssemblyPaths = ghostAssemblyPaths?.Replace("$(AppPath)", appPath);
@@ -254,15 +305,10 @@
 
             using (var ghostAssemblyLoader = new GhostAssemblyLoader(ghostAssemblyPaths, assemblyName))
             {
-                var assemblyFile = ghostAssemblyLoader.FindGhostAssemblyFile(assemblyName);
+                var assemblyFile = ghostAssemblyLoader.FindGhostAssemblyLocation(assemblyName);
 
                 Assert.That(assemblyFile, Is.EqualTo(expect));
             }
-        }
-
-        static string getFile(Assembly assembly)
-        {
-            return new Uri(assembly.EscapedCodeBase).LocalPath;
         }
 
         static string getDirectory(Assembly assembly)
