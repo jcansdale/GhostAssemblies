@@ -12,24 +12,19 @@
         string defaultAssemblyName;
         IDictionary<string, GhostAssembly> ghostAssemblies;
 
-        public GhostAssemblyLoader(string ghostAssemblyPaths, string defaultAssemblyName = null, string installDir = null)
+        public GhostAssemblyLoader(string ghostAssemblyPaths = null, string defaultAssemblyName = null, string installDir = null)
         {
+            var ghostAssemblyLocations = getAssemblyLocations(ghostAssemblyPaths ?? "");
+            ghostAssemblies = createGhostAssemblies(this, ghostAssemblyLocations);
+
             this.defaultAssemblyName = defaultAssemblyName;
             this.installDir = installDir ?? getDirectory(System.Reflection.Assembly.GetCallingAssembly());
-
-            var ghostAssemblyLocations = getAssemblyLocations(ghostAssemblyPaths);
-            ghostAssemblies = createGhostAssemblies(ghostAssemblyLocations);
 
             AppDomain.CurrentDomain.AssemblyResolve += CurrentDomain_AssemblyResolve;
         }
 
         static string[] getAssemblyLocations(string paths)
         {
-            if(paths == null)
-            {
-                return new string[0];
-            }
-
             return paths.Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries);
         }
 
@@ -126,13 +121,13 @@
             return ghostAssembly?.Location;
         }
 
-        IDictionary<string, GhostAssembly> createGhostAssemblies(string[] assemblyLocations)
+        IDictionary<string, GhostAssembly> createGhostAssemblies(GhostAssemblyLoader loader, string[] assemblyLocations)
         {
             var ghostAssemblies = new Dictionary<string, GhostAssembly>();
             foreach (var assemblyLocation in assemblyLocations)
             {
                 var assemblyName = Path.GetFileNameWithoutExtension(assemblyLocation);
-                ghostAssemblies[assemblyName] = new GhostAssembly(this, assemblyName, assemblyLocation);
+                ghostAssemblies[assemblyName] = new GhostAssembly(loader, assemblyName, assemblyLocation);
             }
 
             return ghostAssemblies;
