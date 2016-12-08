@@ -165,11 +165,11 @@
             }
         }
 
-        [TestCase(typeof(GhostAssemblyLoaderTests), typeof(GhostAssemblyLoader), true, false, false, Description = "Ghost & Referenced changes")]
-        [TestCase(typeof(GhostAssemblyLoaderTests), typeof(GhostAssemblyLoader), true, false, false, Description = "Ghost changes")]
-        [TestCase(typeof(GhostAssemblyLoaderTests), typeof(GhostAssemblyLoader), false, true, true, Description = "Referenced changes")]
-        [TestCase(typeof(GhostAssemblyLoaderTests), typeof(GhostAssemblyLoader), false, false, false, Description = "No changes")]
-        [TestCase(typeof(GhostAssemblyLoader), typeof(object), true, true, true, Description = "Strong-Named Ghost")]
+        [TestCase(typeof(GhostAssemblyLoaderTests), typeof(GhostAssemblyLoader), true, false, true, Description = "GhostAndReferencedChanges")]
+        [TestCase(typeof(GhostAssemblyLoaderTests), typeof(GhostAssemblyLoader), true, true, true, Description = "GhostChanges")]
+        [TestCase(typeof(GhostAssemblyLoaderTests), typeof(GhostAssemblyLoader), false, true, true, Description = "ReferencedChanges")]
+        [TestCase(typeof(GhostAssemblyLoaderTests), typeof(GhostAssemblyLoader), false, false, false, Description = "NoChanges")]
+        [TestCase(typeof(GhostAssemblyLoader), typeof(object), true, true, true, Description = "StrongNamedGhost")]
         public void ResolveAssembly_GhostOrReferencedGhostChanges_ExpectVersionChange(
             Type ghostAssemblyType, Type referencedAssemblyType, bool updateGhost, bool updateReferenced,
             bool expectVersionChange)
@@ -189,13 +189,13 @@
                 var asm1 = ghostAssemblyLoader.ResolveAssembly();
                 var ref1 = findReferencedAssembly(asm1, referencedAssemblyName);
                 ghostAssemblyLoader.ResolveAssembly(referencedAssemblyName);
-                if(updateGhost) staticMock.For(() => File.GetLastWriteTime(assemblyFile)).Returns(DateTime.Now);
-                if(updateReferenced) staticMock.For(() => File.GetLastWriteTime(referencedLocation)).Returns(DateTime.Now);
+                if (updateGhost) staticMock.For(() => File.GetLastWriteTime(assemblyFile)).Returns(DateTime.Now);
+                if (updateReferenced) staticMock.For(() => File.GetLastWriteTime(referencedLocation)).Returns(DateTime.Now);
 
                 var asm2 = ghostAssemblyLoader.ResolveAssembly();
 
                 var ref2 = findReferencedAssembly(asm2, referencedAssemblyName);
-                if(expectVersionChange)
+                if (expectVersionChange)
                 {
                     Assert.That(ref2.Version, Is.Not.EqualTo(ref1.Version));
                 }
@@ -203,6 +203,34 @@
                 {
                     Assert.That(ref2.Version, Is.EqualTo(ref1.Version));
                 }
+            }
+        }
+
+        [TestCase(typeof(GhostAssemblyLoaderTests), typeof(GhostAssemblyLoader))]
+        public void ResolveAssembly_ReferencedGhostChanges_RefreshOnce(
+            Type ghostAssemblyType, Type referencedAssemblyType)
+        {
+            var ghostAssembly = ghostAssemblyType.Assembly;
+            var assemblyName = ghostAssembly.GetName().Name;
+            var assemblyFile = ghostAssembly.Location;
+            var referencedAssembly = referencedAssemblyType.Assembly;
+            var referencedAssemblyName = referencedAssembly.GetName().Name;
+            var referencedLocation = referencedAssembly.Location;
+            var expectMessage = GhostAssemblyException.CreateChangeAssemblyVersionMessage(referencedAssemblyName);
+            var ghostAssemblyPaths = assemblyFile + ";" + referencedLocation;
+            using (var ghostAssemblyLoader = new GhostAssemblyLoader(ghostAssemblyPaths, assemblyName))
+            {
+                staticMock.For(() => File.GetLastWriteTime(assemblyFile)).Returns(File.GetLastWriteTime(assemblyFile));
+                staticMock.For(() => File.GetLastWriteTime(referencedLocation)).Returns(File.GetLastWriteTime(referencedLocation));
+                var asm1 = ghostAssemblyLoader.ResolveAssembly();
+                ghostAssemblyLoader.ResolveAssembly(referencedAssemblyName);
+                staticMock.For(() => File.GetLastWriteTime(referencedLocation)).Returns(DateTime.Now);
+                var asm2 = ghostAssemblyLoader.ResolveAssembly();
+
+                var asm3 = ghostAssemblyLoader.ResolveAssembly();
+
+                Assert.That(asm1, Is.Not.EqualTo(asm2));
+                Assert.That(asm2, Is.EqualTo(asm3));
             }
         }
 
